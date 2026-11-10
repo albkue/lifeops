@@ -1,4 +1,4 @@
-﻿"""Ledger repository for raw Bronze objects (idempotency + Phase-2 audit/catalog)."""
+"""Ledger repository for raw Bronze objects (idempotency + Phase-2 audit/catalog)."""
 
 import uuid
 from collections.abc import Iterator

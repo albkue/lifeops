@@ -1,9 +1,9 @@
+import logging
 import os
 import sys
 from collections.abc import Generator
 from pathlib import Path
 
-import logging
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -76,7 +76,7 @@ def minio_config():
                 "access_key": config["access_key"],
                 "secret_key": config["secret_key"],
             }
-    except Exception:  # noqa: BLE001 - registry-gated images (2026): degrade, skip bronze
+    except Exception:
         logger.warning("testcontainers MinIO unavailable; bronze-dependent tests will skip")
         yield None
 
