@@ -52,9 +52,14 @@ jobs:
             sleep 2
           done
           if [ "$ready" != "1" ]; then docker logs object-store | tail -30; exit 1; fi
-          # S3 API must be reachable from the host runner (tests connect here)
-          curl -fsS -o /dev/null "http://127.0.0.1:9000/" || {
-            echo "s3 port check failed"; docker logs object-store | tail -30; exit 1; }
+          # S3 API must be reachable from the host runner (tests connect here).
+          # NOTE: anonymous GET / answers 403 on S3 - that IS a healthy
+          # transport. Fail only when we get no HTTP status at all (000).
+          code=$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" "http://127.0.0.1:9000/" || echo 000)
+          if [ "$code" = "000" ]; then
+            echo "s3 port check failed (no HTTP response)"; docker logs object-store | tail -30; exit 1
+          fi
+          echo "s3 API answering (HTTP $code)"
 
       - name: Install project + dev dependencies
         run: |
