@@ -44,16 +44,17 @@ jobs:
           docker run -d --name object-store -p 9000:9000 -p 9333:9333 \
             chrislusf/seaweedfs:latest server -dir /data -s3 -s3.port=9000 -volume.max=0
           ready=0
-          for i in $(seq 1 30); do
+          # generous budget: cold runner + image pull + raft leader election
+          for i in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:9333/cluster/status >/dev/null 2>&1; then
-              ready=1; echo "object store ready"; break
+              ready=1; echo "object store ready after $i attempts"; break
             fi
             sleep 2
           done
-          if [ "$ready" != "1" ]; then docker logs object-store; exit 1; fi
+          if [ "$ready" != "1" ]; then docker logs object-store | tail -30; exit 1; fi
           # S3 API must be reachable from the host runner (tests connect here)
           curl -fsS -o /dev/null "http://127.0.0.1:9000/" || {
-            echo "s3 port check failed"; docker logs object-store; exit 1; }
+            echo "s3 port check failed"; docker logs object-store | tail -30; exit 1; }
 
       - name: Install project + dev dependencies
         run: |
