@@ -1,0 +1,133 @@
+name: lifeops
+
+x-postgres-env: &postgres-env
+  POSTGRES_USER: ${POSTGRES_USER:-lifeops}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lifeops}
+  POSTGRES_DB: ${POSTGRES_DB:-lifeops}
+
+services:
+  # ----------------------------- Warehouse / app DB -----------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      <<: *postgres-env
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lifeops} -d ${POSTGRES_DB:-lifeops}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ----------------------------- S3-compatible lake ----------------------------
+  # Decision (2026-11-10): MinIO registry images are license/login-gated, so v1
+  # runs SeaweedFS (Apache 2.0) behind the same S3 client abstraction and the
+  # same hostname. Swapping back is one variable: MINIO_IMAGE=quay.io/minio/minio.
+  minio:
+    image: ${MINIO_IMAGE:-chrislusf/seaweedfs:latest}
+    restart: unless-stopped
+    command: server -dir /data -s3 -s3.port=9000 -volume.max=0
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:8333"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  storage-init:
+    build:
+      context: .
+      dockerfile: services/ingestion_api/Dockerfile
+    restart: "no"
+    command:
+      [
+        "python",
+        "-c",
+        "from lifeops_core.storage.object_store import MinioObjectStore; MinioObjectStore.from_settings(__import__('lifeops_core.config', fromlist=['get_settings']).get_settings()).ensure_bucket(); print('bucket ready')",
+      ]
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-lifeops}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-lifeops-secret}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lifeops}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # ----------------------------- Schema migrations -----------------------------
+  migrate:
+    build:
+      context: .
+      dockerfile: services/ingestion_api/Dockerfile
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://lifeops:lifeops@postgres:5432/lifeops}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ----------------------------- Ingestion API ---------------------------------
+  ingestion-api:
+    build:
+      context: .
+      dockerfile: services/ingestion_api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${INGESTION_API_PORT:-8000}:8000"
+    command: ["uvicorn", "ingestion_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://lifeops:lifeops@postgres:5432/lifeops}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-lifeops}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-lifeops-secret}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lifeops}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      LIFEOPS_TIMEZONE: ${LIFEOPS_TIMEZONE:-Asia/Ho_Chi_Minh}
+      LIFEOPS_ENV: ${LIFEOPS_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+
+  # ----------------------------- Insights API ----------------------------------
+  insights-api:
+    build:
+      context: .
+      dockerfile: services/insights_api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${INSIGHTS_API_PORT:-8001}:8001"
+    command: ["uvicorn", "insights_app.main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://lifeops:lifeops@postgres:5432/lifeops}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-lifeops}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-lifeops-secret}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lifeops}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      LIFEOPS_TIMEZONE: ${LIFEOPS_TIMEZONE:-Asia/Ho_Chi_Minh}
+      LIFEOPS_ENV: ${LIFEOPS_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  minio_data:
