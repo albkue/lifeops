@@ -41,7 +41,7 @@ jobs:
       # run step so we can pass the S3-mode command flags.
       - name: Start S3-compatible object store (SeaweedFS)
         run: |
-          docker run -d --name object-store -p 9000:9000 \
+          docker run -d --name object-store -p 9000:9000 -p 9333:9333 \
             chrislusf/seaweedfs:latest server -dir /data -s3 -s3.port=9000 -volume.max=0
           ready=0
           for i in $(seq 1 30); do
@@ -50,7 +50,10 @@ jobs:
             fi
             sleep 2
           done
-          [ "$ready" = "1" ] || { docker logs object-store; exit 1; }
+          if [ "$ready" != "1" ]; then docker logs object-store; exit 1; fi
+          # S3 API must be reachable from the host runner (tests connect here)
+          curl -fsS -o /dev/null "http://127.0.0.1:9000/" || {
+            echo "s3 port check failed"; docker logs object-store; exit 1; }
 
       - name: Install project + dev dependencies
         run: |
