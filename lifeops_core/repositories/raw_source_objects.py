@@ -1,4 +1,7 @@
+﻿"""Ledger repository for raw Bronze objects (idempotency + Phase-2 audit/catalog)."""
+
 import uuid
+from collections.abc import Iterator
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -65,3 +68,79 @@ class RawSourceObjectRepository:
         self.session.add(row)
         self.session.flush()
         return row
+
+    # ------------------------------------------------------------------ read
+    def iter_for_source(
+        self,
+        *,
+        source_name: str,
+        dataset: str | None = None,
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
+        batch_size: int = 500,
+    ) -> Iterator[RawSourceObject]:
+        """Stream ledger rows for a source (optionally filtered).
+
+        Filtering semantics: rows whose extraction window OVERLAPS
+        [window_start, window_end). Rows without a window NEVER match an
+        explicit window query (consistent with ingestion_runs).
+        """
+        stmt = (
+            select(RawSourceObject)
+            .where(RawSourceObject.source_name == source_name)
+            .order_by(RawSourceObject.extraction_window_start.asc().nullslast())
+        )
+        if dataset is not None:
+            stmt = stmt.where(RawSourceObject.dataset == dataset)
+        if window_start is not None:
+            stmt = stmt.where(RawSourceObject.extraction_window_end > window_start)
+        if window_end is not None:
+            stmt = stmt.where(RawSourceObject.extraction_window_start < window_end)
+        stmt = stmt.execution_options(yield_per=batch_size)
+        yield from self.session.execute(stmt).scalars().yield_per(batch_size)
+
+    def list_page(
+        self,
+        *,
+        source_name: str | None = None,
+        dataset: str | None = None,
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[RawSourceObject], int]:
+        """Paginated catalog view used by GET /api/v1/ingestion/objects."""
+        base = select(RawSourceObject)
+        counts = select(func.count()).select_from(RawSourceObject)
+        if source_name is not None:
+            base = base.where(RawSourceObject.source_name == source_name)
+            counts = counts.where(RawSourceObject.source_name == source_name)
+        if dataset is not None:
+            base = base.where(RawSourceObject.dataset == dataset)
+            counts = counts.where(RawSourceObject.dataset == dataset)
+        if window_start is not None:
+            overlapping = RawSourceObject.extraction_window_end > window_start
+            base = base.where(overlapping)
+            counts = counts.where(overlapping)
+        if window_end is not None:
+            overlapping = RawSourceObject.extraction_window_start < window_end
+            base = base.where(overlapping)
+            counts = counts.where(overlapping)
+
+        total = self.session.execute(counts).scalar_one()
+        rows = (
+            self.session.execute(
+                base.order_by(RawSourceObject.ingested_at.desc()).offset(offset).limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        return list(rows), int(total)
+
+    def count_by_source(self, source_name: str) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(RawSourceObject)
+            .where(RawSourceObject.source_name == source_name)
+        )
+        return int(self.session.execute(stmt).scalar_one())

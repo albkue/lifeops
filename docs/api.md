@@ -30,12 +30,14 @@ the whole day).
 
 ### Ingestion
 
-| Method | Path | Phase-1 behavior |
+| Method | Path | Phase-1/2 behavior |
 |---|---|---|
 | `GET /api/v1/ingestion/sources` | lists known sources + adapter availability | `adapter_available=false` until Phase 6/7/11 |
 | `POST /api/v1/ingestion/{source}/run` | trigger incremental run | 202 with run payload; **501** (Source Adapter Not Available) until adapters land |
 | `POST /api/v1/ingestion/{source}/backfill` | window re-run (idempotent) | body requires `window_start`+`window_end`; max 120 days |
-| `GET /api/v1/ingestion/runs` | list runs (filter: `source_name`, `status`, `run_type`) | 200 page |
+| `GET /api/v1/ingestion/runs` | list runs (filter: `source_name`, `status`, `run_type`) | **Phase 2:** + `window_from`/`window_to` overlap filters |
+| `GET /api/v1/ingestion/objects` | **Phase 2** — Bronze ledger catalog (paginated; filters `source_name`, `dataset`, `window_from`/`window_to`) | raw data catalog for the dashboard |
+| `POST /api/v1/ingestion/{source}/audit` | **Phase 2** — Bronze integrity audit: every ledger row must exist in the store and re-hash to its ledger digest | read-only detection (repair = Phase 6+ extractors); optional window body + `dataset`, `problem_limit` |
 
 ### Observability
 

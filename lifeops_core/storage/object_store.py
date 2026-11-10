@@ -1,10 +1,17 @@
-"""Thin wrapper around the MinIO S3-compatible client."""
+"""Thin wrapper around the S3-compatible client (MinIO / SeaweedFS / real S3)."""
 
+import logging
 from io import BytesIO
 
-from minio import Minio
+from minio import Minio, S3Error
 
 from lifeops_core.config import Settings
+
+logger = logging.getLogger(__name__)
+
+
+class ObjectNotFoundError(Exception):
+    """Raised when an object key does not exist in the bucket."""
 
 
 class MinioObjectStore:
@@ -53,3 +60,35 @@ class MinioObjectStore:
             content_type=content_type,
         )
         return len(data)
+
+    def get_object_bytes(self, key: str) -> bytes:
+        """Read an object fully; raises ObjectNotFoundError when absent."""
+        try:
+            response = self._client.get_object(self.bucket, key)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+        except S3Error as exc:
+            if exc.code in ("NoSuchKey", "NoSuchObject", "NoSuchBucket"):
+                raise ObjectNotFoundError(key) from exc
+            raise
+
+    def object_exists(self, key: str) -> bool:
+        try:
+            self._client.stat_object(self.bucket, key)
+        except S3Error as exc:
+            if exc.code in ("NoSuchKey", "NoSuchObject", "NoSuchBucket"):
+                return False
+            raise
+        return True
+
+    def remove_object(self, key: str) -> None:
+        try:
+            self._client.remove_object(self.bucket, key)
+        except S3Error as exc:
+            if exc.code in ("NoSuchKey", "NoSuchObject"):
+                logger.debug("remove_object: %s already absent", key)
+                return
+            raise

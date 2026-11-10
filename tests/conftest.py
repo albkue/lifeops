@@ -3,9 +3,11 @@ import sys
 from collections.abc import Generator
 from pathlib import Path
 
+import logging
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+logger = logging.getLogger("tests.conftest")
 
 # Make repo-root imports work when running pytest from the root or IDEs, and
 # expose the per-service packages (ingestion_app / insights_app) top-level.
@@ -58,19 +60,25 @@ def minio_config():
         yield None  # tests degrade gracefully: bronze mirror becomes best-effort
         return
 
-    with MinioContainer(
-        "minio/minio:latest",
-        access_key="lifeops-test",
-        secret_key="lifeops-test-secret",
-    ) as container:
-        # Different testcontainers versions expose different method names
-        config_getter = getattr(container, "get_connection_config", None) or container.get_config
-        config = config_getter()
-        yield {
-            "endpoint": config["endpoint"],
-            "access_key": config["access_key"],
-            "secret_key": config["secret_key"],
-        }
+    try:
+        with MinioContainer(
+            "minio/minio:latest",
+            access_key="lifeops-test",
+            secret_key="lifeops-test-secret",
+        ) as container:
+            # Different testcontainers versions expose different method names
+            config_getter = (
+                getattr(container, "get_connection_config", None) or container.get_config
+            )
+            config = config_getter()
+            yield {
+                "endpoint": config["endpoint"],
+                "access_key": config["access_key"],
+                "secret_key": config["secret_key"],
+            }
+    except Exception:  # noqa: BLE001 - registry-gated images (2026): degrade, skip bronze
+        logger.warning("testcontainers MinIO unavailable; bronze-dependent tests will skip")
+        yield None
 
 
 # --------------------------------------------------------------------------

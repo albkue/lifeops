@@ -76,13 +76,16 @@ the Insights API, the weekly Life Report, and the alerting engine.
 
 ## Features
 
-- ✅ **Phase 1 (this revision)**: repo scaffold, Docker Compose core stack (Postgres +
-  MinIO + 2 FastAPI services), full PostgreSQL schema + Alembic migrations, manual daily
+- ✅ **Phase 1**: repo scaffold, Docker Compose core stack (Postgres + object store +
+  2 FastAPI services), full PostgreSQL schema + Alembic migrations, manual daily
   log API (mobile-friendly upsert), Bronze raw-store writer with SHA-256 idempotency
   ledger, sample data generator + demo seeder, tests + CI.
-- ⏳ Phase 2: Alembic baseline hardening, bronze replay/backfill runner.
-- Phase 3: Dagster orchestration & schedules.
-- Phase 4: Silver Parquet layer (dedup, UTC-normalized, typed datasets in MinIO).
+- ✅ **Phase 2**: Bronze integrity audit (`POST /ingestion/{source}/audit`,
+  `scripts/audit_bronze.py`), Bronze ledger catalog (`GET /ingestion/objects`),
+  window-overlap filters on runs, CI migration-parity step (`alembic upgrade head` in
+  Actions), testcontainers degradation hardening.
+- ⏳ Phase 3: Dagster orchestration & schedules (next).
+- Phase 4: Silver Parquet layer (dedup, UTC-normalized, typed datasets in object store).
 - Phase 5: dbt Gold layer (dim/fct/agg marts + dbt tests) → `make dbt-run`.
 - Phase 6/7: GitHub + Google Calendar extractors (OAuth, incremental cursors).
 - Phase 8: Weekly Life Report + insights API over Gold marts.
@@ -184,6 +187,20 @@ make dbt-test     # dbt test only
 dbt run --project-dir dbt --profiles-dir dbt   # raw form
 ```
 
+## Bronze operations (Phase 2)
+
+```bash
+# integrity audit via CLI (exit code 0 = clean, 1 = problems)
+docker compose run --rm ingestion-api python scripts/audit_bronze.py --source github
+
+# same via API (window optional)
+curl -s -X POST 'http://localhost:8000/api/v1/ingestion/github/audit?dataset=commits' \
+  -d '{"window_start": "2026-11-01T00:00:00Z", "window_end": "2026-11-09T00:00:00Z"}'
+
+# raw-data catalog (what the dashboard's freshness page will consume)
+curl -s 'http://localhost:8000/api/v1/ingestion/objects?source_name=github&limit=10'
+```
+
 ## Dashboard screenshots
 
 > _Placeholder — Phase 9. Once the Next.js dashboard lands:_
@@ -194,19 +211,20 @@ dbt run --project-dir dbt --profiles-dir dbt   # raw form
 ## Testing & CI
 
 ```bash
-make test          # pytest inside Docker (compose Postgres + MinIO)
+make test          # pytest inside Docker (compose Postgres + object store)
 make test-unit     # pure unit tests only
 make check         # ruff + mypy (CI parity)
 ```
 
-Unit tests run everywhere; integration tests find Postgres via:
+Unit tests run everywhere; integration tests find Postgres/S3 via:
 
 1. `TEST_DATABASE_URL` + `TEST_MINIO_ENDPOINT` (compose/CI), or
 2. spinning **testcontainers** automatically, or
 3. skipping gracefully when neither is available (Bronze mirror tests degrade or skip).
 
-GitHub Actions runs lint (ruff), type check (mypy), pytest, then builds both service
-images; it fails on any error.
+GitHub Actions runs lint (ruff), type check (mypy), an `alembic upgrade head`
+migration-parity step, pytest (against real Postgres + SeaweedFS service containers),
+then builds both service images; it fails on any error.
 
 ## Roadmap
 

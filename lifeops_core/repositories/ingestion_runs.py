@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -70,9 +70,14 @@ class IngestionRunRepository:
         source_name: str | None = None,
         status: str | None = None,
         run_type: str | None = None,
+        window_from: datetime | None = None,
+        window_to: datetime | None = None,
         limit: int = 25,
         offset: int = 0,
     ) -> tuple[list[IngestionRun], int]:
+        """List runs; window_from/window_to use OVERLAP semantics: a run counts
+        when its extraction window intersects [window_from, window_to). Runs
+        without a window never match a window filter."""
         base = select(IngestionRun)
         if source_name:
             base = base.where(IngestionRun.source_name == source_name)
@@ -80,6 +85,12 @@ class IngestionRunRepository:
             base = base.where(IngestionRun.status == status)
         if run_type:
             base = base.where(IngestionRun.run_type == run_type)
+        # Window overlap filters: windowless runs intentionally NEVER match a
+        # window query (documented semantics) â€” NULL comparisons fail naturally.
+        if window_from is not None:
+            base = base.where(IngestionRun.window_end > window_from)
+        if window_to is not None:
+            base = base.where(IngestionRun.window_start < window_to)
 
         total = self.session.execute(select(func.count()).select_from(base.subquery())).scalar_one()
         rows = (

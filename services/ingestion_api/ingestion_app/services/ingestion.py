@@ -47,20 +47,24 @@ class IngestionService:
         self.session = session
         self.storage = storage
 
-    # ------------------------------------------------------------- listing
+    # ------------------------------------------------------------- runs list
     def list_runs(
         self,
         *,
-        source_name: str | None,
-        status: str | None,
-        run_type: str | None,
-        limit: int,
-        offset: int,
+        source_name: str | None = None,
+        status: str | None = None,
+        run_type: str | None = None,
+        window_from: datetime | None = None,
+        window_to: datetime | None = None,
+        limit: int = 25,
+        offset: int = 0,
     ) -> tuple[list[IngestionRun], int]:
         return IngestionRunRepository(self.session).list_runs(
             source_name=source_name,
             status=status,
             run_type=run_type,
+            window_from=window_from,
+            window_to=window_to,
             limit=limit,
             offset=offset,
         )

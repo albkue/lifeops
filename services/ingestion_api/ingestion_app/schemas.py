@@ -113,7 +113,53 @@ class IngestionRunPage(BaseModel):
     offset: int
 
 
+# ---------------------------- bronze catalog/audit --------------------------
+class BronzeObjectRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    source_name: str
+    dataset: str
+    object_key: str
+    payload_sha256: str
+    payload_bytes: int
+    extraction_window_start: datetime | None
+    extraction_window_end: datetime | None
+    schema_version: str
+    ingested_at: datetime
+
+
+class BronzeObjectPage(BaseModel):
+    items: list[BronzeObjectRead]
+    total: int
+    limit: int
+    offset: int
+
+
+class BronzeAuditProblem(BaseModel):
+    object_key: str
+    payload_sha256: str
+    problem: str
+    detail: str | None
+
+
+class BronzeAuditReport(BaseModel):
+    source_name: str
+    dataset: str | None
+    checked_at: str
+    ledger_rows: int
+    ok: int
+    missing: int
+    corrupt: int
+    truncated: bool
+    problems: list[BronzeAuditProblem]
+
+
 __all__ = [
+    "BronzeAuditProblem",
+    "BronzeAuditReport",
+    "BronzeObjectPage",
+    "BronzeObjectRead",
     "ComponentHealth",
     "DailyLogPage",
     "DailyLogRangeQuery",
